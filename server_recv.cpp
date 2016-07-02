@@ -16,6 +16,7 @@ using namespace std;
 int port=6789;
 
 #define RECV_BUFFER_SIZE 1024
+#define PACKETS_PER_BLOCK 2048
 
 struct DataPacket {
 	unsigned id;
@@ -74,7 +75,7 @@ void requestResend(int tcpConn,int udpSock,vector<DataPacket>& packets,vector<un
 
 }
 
-int main(int argc, char** argv) {
+int recvBlock(int tcpConn) {
 
     unsigned sin_len;
     char message[256];
@@ -82,16 +83,7 @@ int main(int argc, char** argv) {
     int socket_descriptor;
     struct sockaddr_in sin;
 
-    cout<<"Waiting control connection"<<endl;
-
-    int tcpConn=listenControl();
-
-    if(tcpConn<=0) {
-	cout<<"Unable to establish control connection"<<endl;
-	exit(1);
-    }
-
-    printf("Waiting for data from sender \n");
+    cerr<<"Waiting for data from sender"<<endl;
 
     bzero(&sin,sizeof(sin));
     sin.sin_family=AF_INET;
@@ -106,7 +98,7 @@ int main(int argc, char** argv) {
 
     read(tcpConn,&length,sizeof(unsigned));
 
-    cout<<"Length: "<<length<<endl;
+    cerr<<"Length: "<<length<<endl;
 
     unsigned recv_size;
 
@@ -114,7 +106,9 @@ int main(int argc, char** argv) {
 
     unsigned next_id_predicted=0;
 
-    unsigned pkt_count=(length-length%RECV_BUFFER_SIZE)/RECV_BUFFER_SIZE+1;
+    unsigned pkt_count;
+
+    read(tcpConn,&pkt_count,sizeof(unsigned));
 
     unsigned real_pkt_count=pkt_count;
 
@@ -122,14 +116,14 @@ int main(int argc, char** argv) {
 
     send_start:
 
-    cout<<"pkt_count: "<<pkt_count<<endl;
+    cerr<<"pkt_count: "<<pkt_count<<endl;
 
     for(int i=0;i<pkt_count;i++)
     {
 	DataPacket rPkt;
 	recvfrom(socket_descriptor,&rPkt,sizeof(rPkt),0,(struct sockaddr *)&sin,&sin_len);
 	if(crc32((unsigned char*)rPkt.data,RECV_BUFFER_SIZE)!=rPkt.crc32_value) {
-		cout<<"[!] CRC32 mismatch: "<<rPkt.crc32_value<<endl;
+		cerr<<"[!] CRC32 mismatch: "<<rPkt.crc32_value<<endl;
 		i--;
 		continue;
 	}
@@ -160,13 +154,13 @@ int main(int argc, char** argv) {
 	}
 	if(!found) {
 		lostPackets.push_back((unsigned)i);
-		cout<<"[X] "<<i<<endl;
+		cerr<<"[X] "<<i<<endl;
 	}
     }
 
     unsigned lostPackets_size=lostPackets.size();
 
-    cout<<"[*] lostPackets_size: "<<lostPackets_size<<endl;    
+    cerr<<"[*] lostPackets_size: "<<lostPackets_size<<endl;    
 
     requestResend(tcpConn,socket_descriptor,packets,lostPackets);
 
@@ -176,7 +170,7 @@ int main(int argc, char** argv) {
     goto send_start;
 
     write_file_start:
-    cout<<"Receiving finished, writing file"<<endl;
+    cerr<<"Receiving finished, writing file"<<endl;
 
     sort(packets.begin(),packets.end(),pkt_id_compare);
 
@@ -184,7 +178,8 @@ int main(int argc, char** argv) {
 //	cout<<"#"<<packets[i].id<<" "<<packets[i].crc32_value<<endl;
 //    }
 
-    ofstream outFile("received.data");
+    ostream& outFile=cout;
+//    ofstream outFile("received.data");
     char *outData=new char [length];
     for(int i=0;i<length;i++) {
 	int tgt_pkt_id=(i-i%RECV_BUFFER_SIZE)/RECV_BUFFER_SIZE;
@@ -193,10 +188,29 @@ int main(int argc, char** argv) {
     }
 
     outFile.write(outData,length);
-    outFile.close();
+//    outFile.close();
 
     close(socket_descriptor);
-    exit(0);
 
-    return (EXIT_SUCCESS);
+    return 0;
+}
+
+int main() {
+    cerr<<"Waiting control connection"<<endl;
+
+    int tcpConn=listenControl();
+
+    if(tcpConn<=0) {
+	cerr<<"Unable to establish control connection"<<endl;
+	exit(1);
+    }
+
+    while(1) {
+	unsigned sig;
+	read(tcpConn,&sig,sizeof(unsigned));
+	if(sig!=0x20001000) break;
+    	recvBlock(tcpConn);
+    }
+
+    return 0;
 }

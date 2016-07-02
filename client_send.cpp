@@ -16,10 +16,10 @@ using namespace std;
 int port=6789;
 
 #define SEND_BUFFER_SIZE 1024
+#define PACKETS_PER_BLOCK 2048
 
-int delay_us=700;
+int delay_us=300;
 
-string filePath;
 string ipAddr;
 
 struct DataPacket {
@@ -50,10 +50,13 @@ void destroySendBuffer() {
 }
 
 unsigned readFileData() {
-	ifstream inFile(filePath.c_str(),ios::in|ios::binary);
-	if(!inFile.is_open()) return 0;
+	istream& inFile=cin;
+
 	unsigned length=0;
-	while(!inFile.eof()) {
+
+	destroySendBuffer();
+	
+	for(int i=0;i<PACKETS_PER_BLOCK && !inFile.eof();i++) {
 		char *buf=new char [SEND_BUFFER_SIZE];
 		for(int i=0;i<SEND_BUFFER_SIZE;i++) buf[i]=0;
 		inFile.read(buf,SEND_BUFFER_SIZE);
@@ -89,26 +92,11 @@ if(-1 == connect(cfd,(struct sockaddr *)(&s_add), sizeof(struct sockaddr)))
 return cfd;
 }
 
-int main(int argc, char** argv) {
+int sendBlock(int tcpConn) {
     int socket_descriptor; 
     int iter=0;
     char buf[80];
     struct sockaddr_in address;
-
-    if(argc!=3) {
-	cout<<"Bad arguments"<<endl;
-	exit(1);
-    }
-
-    filePath=argv[1];
-    ipAddr=argv[2];
-
-    cout<<"Connecting control"<<endl;
-    int tcpConn=connectControl();
-    if(tcpConn<=0) {
-	cout<<"Unable to establish control connection"<<endl;
-	exit(1);
-    }
 
     bzero(&address,sizeof(address));
     address.sin_family=AF_INET;
@@ -119,9 +107,9 @@ int main(int argc, char** argv) {
 
     unsigned length=readFileData();
 
-    cout<<"Length: "<<length<<endl;
+    cerr<<"Length: "<<length<<endl;
 
-    cout<<"Sending "<<sendBuffer.size()<<"*"<<SEND_BUFFER_SIZE<<" bytes of data"<<endl;
+    cerr<<"Sending "<<sendBuffer.size()<<"*"<<SEND_BUFFER_SIZE<<" bytes of data"<<endl;
 
     write(tcpConn,&length,sizeof(unsigned));
 
@@ -133,6 +121,9 @@ int main(int argc, char** argv) {
 	packets.push_back(makeDataPacket(i,sendBuffer[i]));
     }
 
+    unsigned sendBuffer_size=packets.size();
+    write(tcpConn,&sendBuffer_size,sizeof(unsigned));
+    
     send_start:
 
     for(int i=0;i<packets.size();i++) {
@@ -141,7 +132,7 @@ int main(int argc, char** argv) {
 //	cout<<"Packet with id "<<packets[i].id<<" sent"<<endl;
     }
 
-    cout<<"Sending empty packets"<<endl;
+    cerr<<"Sending empty packets"<<endl;
 
     for(int i=0;i<packets.size()/8;i++) {
 	DataPacket emptyPkt;
@@ -156,7 +147,7 @@ int main(int argc, char** argv) {
 
     read(tcpConn,&lostPackets_size,sizeof(unsigned));
 
-    cout<<"[*] lostPackets_size: "<<lostPackets_size<<endl;
+    cerr<<"[*] lostPackets_size: "<<lostPackets_size<<endl;
 
     if(lostPackets_size>0) {
 	for(int i=0;i<lostPackets_size;i++) {
@@ -166,8 +157,8 @@ int main(int argc, char** argv) {
 	}
     }
 
-    cout<<"Lost packets:"<<endl;
-    for(int i=0;i<lostPackets_size;i++) cout<<"[X] "<<lostPackets[i]<<endl;
+    cerr<<"Lost packets:"<<endl;
+    for(int i=0;i<lostPackets_size;i++) cerr<<"[X] "<<lostPackets[i]<<endl;
     if(lostPackets_size==0) goto finish_sending;
    
 //    cout<<"CRC32 values:"<<endl;
@@ -187,7 +178,35 @@ int main(int argc, char** argv) {
 
     close(socket_descriptor);
 
-    exit(0);
+    return 0;
+}
 
-    return (EXIT_SUCCESS);
+int main(int argc, char *argv[]) {
+    if(argc!=2) {
+	cerr<<"Bad arguments"<<endl;
+	exit(1);
+    }
+
+    ipAddr=argv[1];
+
+    cerr<<"Connecting control"<<endl;
+    int tcpConn=connectControl();
+    if(tcpConn<=0) {
+	cerr<<"Unable to establish control connection"<<endl;
+	return 1;
+    }
+
+    while(!cin.eof()) {
+	cerr<<"Sending block"<<endl;
+	unsigned sigContinue=0x20001000;
+	write(tcpConn,&sigContinue,sizeof(unsigned));
+	sendBlock(tcpConn);
+    }
+
+    unsigned sigTerminate=0x20002000;
+    write(tcpConn,&sigTerminate,sizeof(unsigned));
+
+    close(tcpConn);
+
+    return 0;
 }
