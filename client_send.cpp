@@ -16,9 +16,10 @@ using namespace std;
 int port=6789;
 
 #define SEND_BUFFER_SIZE 1024
-#define PACKETS_PER_BLOCK 2048
+#define PACKETS_PER_BLOCK 1024
+#define EMPTY_PACKETS_NUM 100
 
-int delay_us=300;
+int delay_us=200;
 
 string ipAddr;
 
@@ -92,7 +93,7 @@ if(-1 == connect(cfd,(struct sockaddr *)(&s_add), sizeof(struct sockaddr)))
 return cfd;
 }
 
-int sendBlock(int tcpConn) {
+double sendBlock(int tcpConn) {
     int socket_descriptor; 
     int iter=0;
     char buf[80];
@@ -124,17 +125,23 @@ int sendBlock(int tcpConn) {
     unsigned sendBuffer_size=packets.size();
     write(tcpConn,&sendBuffer_size,sizeof(unsigned));
     
+    unsigned totalPackets=0;
+    unsigned totalLoss=0;
+
     send_start:
 
     for(int i=0;i<packets.size();i++) {
 	sendto(socket_descriptor,&packets[i],sizeof(DataPacket),0,(struct sockaddr *)&address,sizeof(address));
+	totalPackets++;
 	usleep(delay_us);
 //	cout<<"Packet with id "<<packets[i].id<<" sent"<<endl;
     }
 
     cerr<<"Sending empty packets"<<endl;
 
-    for(int i=0;i<packets.size()/8;i++) {
+    usleep(delay_us*3);
+
+    for(int i=0;i<EMPTY_PACKETS_NUM;i++) {
 	DataPacket emptyPkt;
 	emptyPkt.id=0x1fffffff;
 	sendto(socket_descriptor,&emptyPkt,sizeof(emptyPkt),0,(struct sockaddr *)&address,sizeof(address));
@@ -159,6 +166,8 @@ int sendBlock(int tcpConn) {
 
     cerr<<"Lost packets:"<<endl;
     for(int i=0;i<lostPackets_size;i++) cerr<<"[X] "<<lostPackets[i]<<endl;
+    totalLoss+=lostPackets_size;
+
     if(lostPackets_size==0) goto finish_sending;
    
 //    cout<<"CRC32 values:"<<endl;
@@ -178,7 +187,7 @@ int sendBlock(int tcpConn) {
 
     close(socket_descriptor);
 
-    return 0;
+    return (double)totalLoss/(double)totalPackets;
 }
 
 int main(int argc, char *argv[]) {
@@ -196,12 +205,23 @@ int main(int argc, char *argv[]) {
 	return 1;
     }
 
+    double lossSum=0.0;
+    unsigned pktCount=0;
+
     while(!cin.eof()) {
 	cerr<<"Sending block"<<endl;
 	unsigned sigContinue=0x20001000;
 	write(tcpConn,&sigContinue,sizeof(unsigned));
-	sendBlock(tcpConn);
+	double loss=sendBlock(tcpConn);
+	cerr<<"Loss: "<<loss<<endl;
+	lossSum+=loss;
+	pktCount++;
+	if(loss>0.10 && delay_us<1500) delay_us+=50;
+	else if(loss<0.10 && delay_us>=100) delay_us-=50;
+	cerr<<"Current delay_us: "<<delay_us<<endl;
     }
+
+    cerr<<"Average loss: "<<lossSum/pktCount<<endl;
 
     unsigned sigTerminate=0x20002000;
     write(tcpConn,&sigTerminate,sizeof(unsigned));

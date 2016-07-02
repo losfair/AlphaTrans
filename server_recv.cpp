@@ -16,7 +16,7 @@ using namespace std;
 int port=6789;
 
 #define RECV_BUFFER_SIZE 1024
-#define PACKETS_PER_BLOCK 2048
+#define PACKETS_PER_BLOCK 1024
 
 struct DataPacket {
 	unsigned id;
@@ -92,6 +92,13 @@ int recvBlock(int tcpConn) {
     sin_len=sizeof(sin);
 
     socket_descriptor=socket(AF_INET,SOCK_DGRAM,0);
+
+    struct timeval tv_out;
+    tv_out.tv_sec=1;
+    tv_out.tv_usec=0;
+
+    setsockopt(socket_descriptor,SOL_SOCKET,SO_RCVTIMEO,&tv_out,sizeof(tv_out));
+
     bind(socket_descriptor,(struct sockaddr *)&sin,sizeof(sin));
 
     unsigned length;
